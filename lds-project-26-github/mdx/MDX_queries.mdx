@@ -1,0 +1,138 @@
+
+-- Q2 ---------------------------------------------------
+-- For each month, show the total damage costs for each location 
+-- and the grand total with respect to the location.
+
+select
+NONEMPTY({[Date].[MONTH].[MONTH], [Date].[MONTH].[All]})
+on columns,
+NONEMPTY([Place].[BEAT OF OCCURRENCE].[BEAT OF OCCURRENCE])
+on rows
+from [Damages]
+where [Measures].[DAMAGE AMOUNT]
+
+
+-- Q4 ----------------------------------------------
+-- For each location, 
+-- show the damage costs increase or decrease, in percentage,
+-- with respect to the previous year.
+
+
+with
+	member prev as
+	 (PARALLELPERIOD([Date].[YEAR].[YEAR], 1,[Date].[YEAR].currentmember), [Measures].[DAMAGE AMOUNT])
+	member perc as
+		IIF(
+			NOT ISEMPTY(prev),
+			([Measures].[DAMAGE AMOUNT] - prev) / prev,
+			NULL
+			),
+	format_string ="percent"
+select
+[Date].[YEAR].[YEAR] on columns,
+[Place].[BEAT OF OCCURRENCE].[BEAT OF OCCURRENCE] on rows
+from [Damages] 
+where perc
+
+
+-- Q6
+-- For each vehicle type and each year, show the information 
+-- and the total damage costs of the person with the highest reported damage.
+
+WITH MEMBER [Measures].[Max Damage Person] AS
+TOPCOUNT(NONEMPTY(
+		([Person].[PERSON ID].[PERSON ID].MEMBERS), [Measures].[DAMAGE AMOUNT]), 
+	1,
+	[Measures].[DAMAGE AMOUNT]).Item(0).Member_Key
+
+MEMBER [Measures].[Max Damage] AS
+MAX(NONEMPTY(
+            ([Person].[PERSON ID].[PERSON ID].MEMBERS), 
+            [Measures].[DAMAGE AMOUNT]),
+    [Measures].[DAMAGE AMOUNT])
+
+SELECT 
+    {[Measures].[Max Damage Person], [Measures].[Max Damage]} ON COLUMNS,
+    ([Date].[YEAR].[YEAR].MEMBERS,
+	[Vehicle].[VEHICLE TYPE].[VEHICLE TYPE].MEMBERS) ON ROWS
+FROM Damages
+
+
+-- Q7
+-- Propose and solve a query showing some interesting and 
+-- non-trivial facts you discover during the first part of the project.
+
+-- Rank the weather conditions by their contribution 
+-- to total damage costs (as a percentage). 
+-- Additionally, display the number of crashes 
+-- occurring during daytime (8 AM to 9 PM) and nighttime (9 PM to 8 AM) 
+-- for each weather condition.
+
+
+WITH 
+    MEMBER perc AS 
+        [Measures].[Damage Amount] / 
+		([Road Condition].[WEATHER CONDITION].currentmember.parent, [Measures].[Damage Amount]),
+        FORMAT_STRING = 'Percent'
+	MEMBER Daytime AS 
+        AGGREGATE({[Date].[HOUR].[8] : [Date].[HOUR].[21]},  [Measures].[Damage Fact Count])
+	MEMBER Nighttime AS 
+		AGGREGATE({[Date].[HOUR].[22] : [Date].[HOUR].[7]},  [Measures].[Damage Fact Count])
+
+    SELECT 
+    {perc, Daytime, Nighttime} ON COLUMNS,
+	order(NONEMPTY([Road Condition].[WEATHER CONDITION].[WEATHER CONDITION]),
+		perc, bDESC) ON ROWS
+FROM [Damages]
+
+
+
+-- Q8b
+-- For each year, show the most risky crash type and its total damage costs. 
+-- To measure how risky a crash type is, 
+-- you should assign a weight to each type of injury you encounter in the data 
+-- (for example, a fatal injury weighs 5 times an incapacitating one, 
+-- which weighs twice a non-incapacitating injury).
+
+
+WITH 
+    MEMBER [Measures].[Risk] AS
+        50*SUM(
+            [Injuries Dim].[INJURIES FATAL].members, 
+            VAL([Injuries Dim].[INJURIES FATAL].CURRENTMEMBER.NAME) * [Measures].[Damage Fact Count]
+        ) + 
+		  10* SUM(
+            [Injuries Dim].[INJURIES INCAPACITATING].members, 
+            VAL([Injuries Dim].[INJURIES INCAPACITATING].CURRENTMEMBER.NAME) * [Measures].[Damage Fact Count]
+        ) + 
+		      5*  SUM(
+            [Injuries Dim].[INJURIES NON INCAPACITATING].members, 
+            VAL([Injuries Dim].[INJURIES NON INCAPACITATING].CURRENTMEMBER.NAME) * [Measures].[Damage Fact Count]
+        ) + 
+				     1*   SUM(
+            [Injuries Dim].[INJURIES NO INDICATION].members, 
+            VAL([Injuries Dim].[INJURIES NO INDICATION].CURRENTMEMBER.NAME) * [Measures].[Damage Fact Count]
+        ) + 
+				  1*      SUM(
+            [Injuries Dim].[INJURIES REPORTED NOT EVIDENT].members, 
+            VAL([Injuries Dim].[INJURIES REPORTED NOT EVIDENT].CURRENTMEMBER.NAME) * [Measures].[Damage Fact Count]
+        )
+
+    MEMBER [Measures].[Most Risky Crash Type] AS
+        TOPCOUNT(
+            [Crash].[FIRST CRASH TYPE].[FIRST CRASH TYPE],
+            1,
+            [Measures].[Risk]
+        ).ITEM(0).NAME
+
+    MEMBER [Measures].[Most Risky Crash Type Damage] AS
+		 (TOPCOUNT(
+            [Crash].[FIRST CRASH TYPE].[FIRST CRASH TYPE],
+            1,
+            [Measures].[Risk]
+        ).ITEM(0), [Measures].[DAMAGE AMOUNT])
+
+SELECT 
+    {[Measures].[Most Risky Crash Type], [Measures].[Risk], [Measures].[Most Risky Crash Type Damage]} ON COLUMNS,
+    [Date].[YEAR].[YEAR] ON ROWS
+FROM [Damages]
